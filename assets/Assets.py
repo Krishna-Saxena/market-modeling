@@ -19,6 +19,7 @@ class BaseAsset(Asset):
     super().__init__(name, asset_id, growth_timeseries)
 
   def collect_data(self):
+    # no covariates whose levels we need to register here
     pass
 
 

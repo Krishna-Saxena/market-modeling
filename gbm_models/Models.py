@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from utils import *
+from gbm_models.utils import *
 
 
 class Model(ABC):
@@ -35,10 +35,25 @@ class IndependentModel(Model):
     self.vols = np.zeros((self.N_ASSETS,), dtype=np.float32)
 
   def estimate_parameters(self):
-    raise NotImplementedError("IndependentModel.estimate_parameters()")
+    for i, asset in enumerate(self.market.assets):
+      growth_timeseries = asset.growth_timeseries
+      self.drifts[i], self.vols[i] = get_indep_MLE_params(growth_timeseries)
 
   def simulate(self, dates, num_sims, **kwargs):
-    raise NotImplementedError("IndependentModel.simulate()")
+    sim_res = np.zeros((num_sims, self.N_ASSETS, len(dates)+1))
+
+    for n_sim in range(num_sims):
+      for i, student in enumerate(self.market.assets):
+        ts = (dates - student.growth_timeseries.time.max()).dt.days
+
+        sim_res[n_sim, i, :] = sample_indep_GBM(
+          self.drifts[i],
+          self.vols[i],
+          student.growth_timeseries.signal.iloc[-1],
+          ts.values,
+          kwargs.get('add_BM', True)
+        )
+    return sim_res
 
 
 class DependentModel(Model):

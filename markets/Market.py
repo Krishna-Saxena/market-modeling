@@ -22,4 +22,7 @@ class BaseMarket(Market):
     super().__init__(assets, market_name)
 
   def collect_data(self):
-    raise NotImplementedError('base market')
+    raise NotImplementedError('BaseMarket.collect_data()')
+
+  def align_timeseries(self):
+    raise NotImplementedError('BaseMarket.align_timeseries()')

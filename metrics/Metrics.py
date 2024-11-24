@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 
+from metrics.ts_utils import *
+
 
 class VarType(Enum):
   QUANTITATIVE = auto()
@@ -13,7 +15,7 @@ class Metric(ABC):
     self.var_type = var_type
 
 
-class CategoricalMetric(ABC, Metric):
+class CategoricalMetric(Metric):
   levels = {}
 
   @property
@@ -35,7 +37,13 @@ class Timeseries(Metric):
     super().__init__(signal_var_type)
     self.time = time
     self.signal = signal
-    self.var_type = signal_var_type
+    self.N_REMOVED = 0
+
+  def remove_leading_zeros(self):
+    remove_leading_zeros(self)
+
+  def remove_leading_n_values(self, n):
+    remove_leading_n_values(self, n)
 
 
 class BaseTimeseries(Timeseries):
@@ -53,5 +61,10 @@ class BaseTimeseries(Timeseries):
 class CovariateTimeseries(Timeseries):
   def __init__(self, time, signal, signal_var_type: VarType, **kwargs):
     super().__init__(time, signal, signal_var_type)
-    for key, value in kwargs.items():
-      setattr(self, key, value)
+    self.covariates = {key : value for key, value in kwargs.items()}
+
+  def remove_leading_zeros(self):
+    super().remove_leading_zeros()
+    for key in self.covariates:
+      if isinstance(self.covariates[key], Timeseries):
+        self.covariates[key].remove_leading_n_values(self.N_REMOVED)
