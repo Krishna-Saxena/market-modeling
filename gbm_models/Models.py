@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from utils import *
 
+
 class Model(ABC):
   def __init__(self, market):
     self.market = market
@@ -25,6 +26,7 @@ class Model(ABC):
     """
     pass
 
+
 class IndependentModel(Model):
   def __init__(self, market):
     super().__init__(market)
@@ -33,10 +35,11 @@ class IndependentModel(Model):
     self.vols = np.zeros((self.N_ASSETS,), dtype=np.float32)
 
   def estimate_parameters(self):
-    raise NotImplementedError("indep model")
+    raise NotImplementedError("IndependentModel.estimate_parameters()")
 
   def simulate(self, dates, num_sims, **kwargs):
-    raise NotImplementedError("indep model")
+    raise NotImplementedError("IndependentModel.simulate()")
+
 
 class DependentModel(Model):
   def __init__(self, market):
@@ -46,17 +49,22 @@ class DependentModel(Model):
     self.vols = np.zeros((self.N_ASSETS, self.N_ASSETS), dtype=np.float32)
 
   def estimate_parameters(self):
-    raise NotImplementedError("dep model")
+    raise NotImplementedError("DependentModel.estimate_parameters()")
 
   def simulate(self, dates, num_sims, **kwargs):
-    raise NotImplementedError("dep model")
+    raise NotImplementedError("DependentModel.simulate()")
 
-class CovariateModel(Model):
+  def get_correlation_mat(self):
+    raise NotImplementedError("DependentModel.get_correlation_mat()")
+
+
+class CovariateModel(Model, ABC):
   @abstractmethod
   def summarize_covariate_distributions(self):
     pass
 
-class IndependentCovariateModel(CovariateModel):
+
+class IndependentCovariateModel(CovariateModel, IndependentModel):
   def estimate_parameters(self):
     raise NotImplementedError("indep covar model")
 
@@ -66,7 +74,8 @@ class IndependentCovariateModel(CovariateModel):
   def summarize_covariate_distributions(self):
     raise NotImplementedError("indep covar model")
 
-class CorrelationCovariateModel(CovariateModel):
+
+class DependentCovariateModel(CovariateModel, DependentModel):
   def estimate_parameters(self):
     raise NotImplementedError("corr covar model")
 
