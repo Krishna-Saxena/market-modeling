@@ -1,19 +1,22 @@
 import numpy as np
+import pandas as pd
+
+from markets.Markets import Market
 
 
-def get_indep_MLE_params(timeseries):
+def get_indep_MLE_params(ts_df: pd.DataFrame):
   """
-  Calculate MLE GBM model of a single signal
+  Calculates the MLE GBM parameters using a single timeseries
 
   Args:
-    timeseries: a metrics.TimeSeries object
+    ts_df: a pd.DataFrame with columns (at least) `time` and `signal`
 
-  Returns: mu_hat, sigma_sq_hat
+  Returns: mu_hat, sigma_sq_hat, the MLE drift and volatility
 
   """
-  t = timeseries.time - timeseries.time.min()
+  t = ts_df.time - ts_df['time'].min()
   dt = (t - t.shift(1)).dt.days.values
-  signal = timeseries.signal.values
+  signal = ts_df['signal'].values
 
   n = signal.shape[0]
   log_prices = np.log(signal)
@@ -44,12 +47,12 @@ def sample_indep_GBM(mu, sigma_sq, S_0, ts, add_BM=True):
   avg_drift = mu - sigma_sq / 2
   vols = np.random.normal(size=ts.shape)
 
-  S_ts = np.zeros((len(ts)+1, ))
+  S_ts = np.zeros((len(ts) + 1,))
   S_ts[0] = S_0
   for i in range(len(ts)):
-    dt = ts[i] if i == 0 else ts[i] - ts[i-1]
-    vol = (sigma_sq * dt)**0.5*vols[i-1] if add_BM else 0
-    S_ts[i+1] = S_ts[i]*np.exp(avg_drift*dt + vol)
+    dt = ts[i] if i == 0 else ts[i] - ts[i - 1]
+    vol = (sigma_sq * dt) ** 0.5 * vols[i - 1] if add_BM else 0
+    S_ts[i + 1] = S_ts[i] * np.exp(avg_drift * dt + vol)
 
   # S_ts = np.concatenate(
   #   ([S_0],
@@ -59,17 +62,22 @@ def sample_indep_GBM(mu, sigma_sq, S_0, ts, add_BM=True):
   return S_ts
 
 
-def get_corr_MLE_params(timeseries):
+def _get_init_dep_MLE_params(market: Market):
+  pass
+
+
+def get_dep_MLE_params(market: Market):
   """
   Calculate MLE MV-GBM model of a set of signals
 
   Args:
-    timeeries: a list of metrics.Timeseries objects, 1 per student
+    market: a list of metrics.Timeseries objects, 1 per student
 
   Returns: mu_hat, sigma_sq_hat, Cov_hat
 
   """
   raise NotImplementedError('get_corr_MLE_params')
+
 
 def sample_corr_GBM(mu, sigma_sq, Cov, S_0, ts, add_BM=True):
   """

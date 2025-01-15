@@ -1,4 +1,10 @@
-def remove_leading_zeros(timeseries):
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from Metrics import TimeseriesMetric
+
+
+def remove_leading_zeros(timeseries: 'TimeseriesMetric'):
   """
   Removes all leading zeros from timeseries.signal and their associated times, in place.
   Saves the number of elements removed into timeseries.N_REMOVED
@@ -8,14 +14,14 @@ def remove_leading_zeros(timeseries):
 
   """
   first_non_zero = 0
-  while timeseries.signal[first_non_zero] == 0:
+  while timeseries.value.signal[first_non_zero] == 0:
     first_non_zero += 1
-  timeseries.time = timeseries.time[first_non_zero:]
-  timeseries.signal = timeseries.signal[first_non_zero:]
+  timeseries.value.time = timeseries.value.time[first_non_zero:]
+  timeseries.value.signal = timeseries.value.signal[first_non_zero:]
   timeseries.N_REMOVED = first_non_zero
 
 
-def remove_leading_n_values(timeseries, n: int):
+def remove_leading_n_values(timeseries: 'TimeseriesMetric', n: int):
   """
   Remove the first n entries from `timeseries`'s time and signal vectors, in place.
 
@@ -24,6 +30,5 @@ def remove_leading_n_values(timeseries, n: int):
     n: the number of entries to remove
 
   """
-  timeseries.time = timeseries.time[n:]
-  timeseries.signal = timeseries.signal[n:]
+  timeseries.value = timeseries.value.iloc[n:, :]
   timeseries.N_REMOVED = n

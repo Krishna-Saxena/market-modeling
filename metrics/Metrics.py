@@ -1,70 +1,54 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from enum import Enum, auto
 
 from metrics.ts_utils import *
+
+import pandas as pd
 
 
 class VarType(Enum):
   QUANTITATIVE = auto()
   CATEGORICAL = auto()
+  MULTI_CATEGORICAL = auto()
   BINARY = auto()
 
 
 class Metric(ABC):
-  def __init__(self, var_type: VarType):
+  def __init__(self, var_type: VarType, value):
     self.var_type = var_type
+    self.value = value
 
 
-class CategoricalMetric(Metric):
-  levels = {}
-
-  @property
-  @abstractmethod
-  def var_type(self):
-    pass
+class StaticMetric(Metric):
+  def __init__(self, value, var_type: VarType):
+    super().__init__(var_type, value)
 
 
-class Timeseries(Metric):
-  @abstractmethod
-  def __init__(self, time, signal, signal_var_type: VarType, **kwargs):
+class TimeseriesMetric(Metric):
+  def __init__(self, time, signal, signal_var_type: VarType):
     """
     Args:
       time: a 1D numpy array/torch tensor of days (since first measurement)
       signal: a 1D numpy array/torch tensor of measurements synced to `time`
       signal_var_type: a Metric.VarType enum describing the type of `signal`
-      **kwargs: additional 1D numpy array/torch tensors of measurements synced to `time`
     """
-    super().__init__(signal_var_type)
-    self.time = time
-    self.signal = signal
+    super().__init__(signal_var_type, None)
+    self.value = pd.DataFrame({'time': time, 'signal': signal})
     self.N_REMOVED = 0
-
-  def remove_leading_zeros(self):
     remove_leading_zeros(self)
 
-  def remove_leading_n_values(self, n):
-    remove_leading_n_values(self, n)
-
-
-class BaseTimeseries(Timeseries):
-  def __init__(self, time, signal, signal_var_type: VarType, **kwargs):
-    """
-    Args:
-      time: a 1D numpy array/torch tensor of days (since first measurement)
-      signal: a 1D numpy array/torch tensor of measurements synced to `time`
-      signal_var_type: a Metric.VarType enum describing the type of `signal`
-      **kwargs: NOT USED in BaseTimeseries
-    """
-    super().__init__(time, signal, signal_var_type)
-
-
-class CovariateTimeseries(Timeseries):
-  def __init__(self, time, signal, signal_var_type: VarType, **kwargs):
-    super().__init__(time, signal, signal_var_type)
-    self.covariates = {key : value for key, value in kwargs.items()}
-
   def remove_leading_zeros(self):
-    super().remove_leading_zeros()
-    for key in self.covariates:
-      if isinstance(self.covariates[key], Timeseries):
-        self.covariates[key].remove_leading_n_values(self.N_REMOVED)
+    """
+    Removes all initial observations from `self.value` where `signal == 0.0` (and their associated timestamps), in place.
+    Saves the number of elements removed into `self.N_REMOVED`
+
+    """
+    remove_leading_zeros(self)
+
+  def remove_leading_n_values(self, n: int):
+    """
+    Remove the first n entries from `timeseries`'s time and signal vectors, in place.
+    Sets self.N_REMOVED to `n`
+
+    """
+    remove_leading_n_values(self, n)

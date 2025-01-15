@@ -36,20 +36,19 @@ class IndependentModel(Model):
 
   def estimate_parameters(self):
     for i, asset in enumerate(self.market.assets):
-      growth_timeseries = asset.growth_timeseries
-      self.drifts[i], self.vols[i] = get_indep_MLE_params(growth_timeseries)
+      self.drifts[i], self.vols[i] = get_indep_MLE_params(asset.ts_df)
 
   def simulate(self, dates, num_sims, **kwargs):
     sim_res = np.zeros((num_sims, self.N_ASSETS, len(dates)+1))
 
     for n_sim in range(num_sims):
-      for i, student in enumerate(self.market.assets):
-        ts = (dates - student.growth_timeseries.time.max()).dt.days
+      for i, asset in enumerate(self.market.assets):
+        ts = (dates - asset.ts_df.time.max()).dt.days
 
         sim_res[n_sim, i, :] = sample_indep_GBM(
           self.drifts[i],
           self.vols[i],
-          student.growth_timeseries.signal.iloc[-1],
+          asset.ts_df.signal.iloc[-1],
           ts.values,
           kwargs.get('add_BM', True)
         )
