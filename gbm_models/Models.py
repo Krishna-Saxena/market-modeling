@@ -1,5 +1,10 @@
 from abc import ABC, abstractmethod
+
+import numpy as np
+
 from gbm_models.utils import *
+from markets.Markets import XarrayMarket
+from py_utils.py_utils import last_index_lt_1D
 
 
 class Model(ABC):
@@ -8,7 +13,7 @@ class Model(ABC):
     self.N_ASSETS = len(self.market.assets)
 
   @abstractmethod
-  def estimate_parameters(self):
+  def estimate_parameters(self, **kwargs):
     pass
 
   @abstractmethod
@@ -34,7 +39,7 @@ class IndependentModel(Model):
     self.drifts = np.zeros((self.N_ASSETS,), dtype=np.float32)
     self.vols = np.zeros((self.N_ASSETS,), dtype=np.float32)
 
-  def estimate_parameters(self):
+  def estimate_parameters(self, **kwargs):
     for i, asset in enumerate(self.market.assets):
       self.drifts[i], self.vols[i] = get_indep_MLE_params(asset.ts_df)
 
@@ -57,19 +62,48 @@ class IndependentModel(Model):
 
 class DependentModel(Model):
   def __init__(self, market):
+    if not isinstance(market, XarrayMarket):
+      raise TypeError(f'DependentModel requires market to be a XarrayMarket, got {type(market)}')
     super().__init__(market)
 
     self.drifts = np.zeros((self.N_ASSETS,), dtype=np.float32)
-    self.vols = np.zeros((self.N_ASSETS, self.N_ASSETS), dtype=np.float32)
+    self.Sigma = np.zeros((self.N_ASSETS, self.N_ASSETS), dtype=np.float32)
 
-  def estimate_parameters(self):
-    raise NotImplementedError("DependentModel.estimate_parameters()")
+  def estimate_parameters(self, **kwargs):
+    self.drifts, self.Sigma = get_dep_MLE_params(self.market, **kwargs)
+    self.vols = np.linalg.norm(self.Sigma, axis=0, keepdims=True)
 
   def simulate(self, dates, num_sims, **kwargs):
-    raise NotImplementedError("DependentModel.simulate()")
+    """
+    simulate future market behavior
+
+    Args:
+      dates: datetime array
+      num_sims: number of simulations to run
+      **kwargs: optional arguments
+        add_BM: bool indicating whether to add Brownian Motion (randomness) to simulation
+
+    Returns: simulation results in 3D np array with shape (num_sims, self.N_ASSETS, len(dates) + 1)
+
+    """
+    sim_res = np.zeros((num_sims, self.N_ASSETS, len(dates) + 1))
+    market_times = self.market.xarray.time.values
+    market_t_index = last_index_lt_1D(market_times, min(dates))
+    # calculate # of days since the last recorded date before new dates
+    ts = (dates - market_times[market_t_index]).dt.days
+
+    for n_sim in range(num_sims):
+      sim_res[n_sim, :, :] = sample_corr_GBM(
+        self.drifts, self.Sigma,
+        self.market.xarray.sel(time=market_times[market_t_index], variable='signal').to_numpy(),
+        ts,
+        add_BM=kwargs.get('add_BM', True)
+      )
+
+    return sim_res
 
   def get_correlation_mat(self):
-    raise NotImplementedError("DependentModel.get_correlation_mat()")
+    return self.Sigma
 
 
 class CovariateModel(Model, ABC):
