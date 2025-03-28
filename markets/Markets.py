@@ -12,7 +12,7 @@ class Market(ABC):
   def collect_data(self, sep=','):
     pass
 
-  def align_timeseries(self):
+  def align_timeseries(self, impute=False):
     common_times = set(self.assets[0].ts_df.time.values)
     for asset in self.assets[1:]:
       common_times = common_times.intersection(asset.ts_df.time.values)
@@ -49,12 +49,16 @@ class XarrayMarket(Market):
     df_combined = pd.concat([asset.ts_df.set_index(['time', 'ID']) for asset in assets], sort=False)
     self.xarray = xr.Dataset.from_dataframe(df_combined).to_dataarray()
 
-  def align_timeseries(self):
-    self.xarray = self.xarray.dropna(dim='time')
+  def align_timeseries(self, impute=False):
+    if impute:
+      # logic
+      self.xarray = self.xarray
+    else:
+      self.xarray = self.xarray.dropna(dim='time')
 
   def display_market(self):
     # x_ax = np.arange(self.xarray.time.shape[0])
-    x_ax = self.xarray.time.values.astype(np.int64) // 10**9
+    x_ax = self.xarray.time.values.astype(np.int64)
     y_ax = np.arange(self.xarray.ID.shape[0])
     z_ax = np.arange(self.xarray.variable.shape[0])
 
@@ -64,12 +68,12 @@ class XarrayMarket(Market):
     ax = fig.add_subplot(111, projection='3d')
 
     ax.set_xlabel('Time', c='b')
-    # ax.set_xticks([datetime.fromtimestamp(time) for time in x_ax])
-    ax.set_xticks(pd.date_range(
-      start=datetime.fromtimestamp(x_ax[0]).strftime('%Y-%m-%d'),
-      end=datetime.fromtimestamp(x_ax[-1]).strftime('%Y-%m-%d'),
-      freq="M")
-    )
+    ax.set_xticks(self.xarray.time)
+    # ax.set_xticks(pd.date_range(
+    #   start=self.xarray.time.values[0],
+    #   end=self.xarray.time.values[-1],
+    #   freq="W")
+    # )
     ax.set_ylabel('Asset ID', c='b')
     ax.set_yticks(y_ax, [_id[:10] for _id in self.xarray.ID.values], c='m')
     ax.set_zlabel('Measure', c='b')

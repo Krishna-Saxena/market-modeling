@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from markets.Markets import Market, XarrayMarket
 from metrics.EvalMetrics import mae
 
+SEED = 802073711
 
 def get_indep_MLE_params(ts_df: pd.DataFrame):
   """
@@ -82,6 +83,21 @@ def _get_zero_grad_hook(mask):
     return grad * mask
   return hook
 
+def _add_random_noise_to_Cov_mat(Sigma, adjustment=100):
+  # 1. set mu = [-1, 1]
+  mu = np.array([-1, 1])
+  # 2. run one iter of K-means clustering on triu(Sigma) with seed mu
+  cov_vals = Sigma[np.triu_indices_from(Sigma, k=1)]
+  assignments = np.argmin((cov_vals[:, None]-mu[None, :])**2, axis=1)
+  # 3. get vars of each mode
+  var0 = np.var(cov_vals[assignments == 0])
+  var1 = np.var(cov_vals[assignments == 1])
+  # 4. let sig2_hat = weighted avg of the modes' vars, weighted by members of each mode
+  sig2_hat = (var0*np.sum(assignments == 0) + var1*np.sum(assignments == 1))/(assignments.shape[0])
+  # 5. add N(0, sig2_hat*I) noise to Sigma
+  rng = np.random.RandomState(SEED)
+  return Sigma + rng.normal(0, sig2_hat**0.5/adjustment, Sigma.shape)
+
 
 def get_dep_MLE_params(market: Market, n_iters=200, return_best=True):
   """
@@ -89,6 +105,8 @@ def get_dep_MLE_params(market: Market, n_iters=200, return_best=True):
 
   Args:
     market: an XarrayMarket object
+    n_iters: number of iterations (here, epochs) of gradient ascent to run
+    return_best: whether to return the best parameters (by MAE metric) or parameters from last iteration
 
   Returns: mu_hat, A_hat
 
@@ -108,6 +126,7 @@ def get_dep_MLE_params(market: Market, n_iters=200, return_best=True):
 
   # get initial state from simple model
   mu_0, Sigma_0 = _get_init_dep_MLE_params(dX, dt)
+  Sigma_0 = _add_random_noise_to_Cov_mat(Sigma_0)
   A_0 = np.linalg.cholesky(Sigma_0).real
 
   mu = torch.tensor(mu_0, requires_grad=True)
@@ -142,7 +161,7 @@ def get_dep_MLE_params(market: Market, n_iters=200, return_best=True):
     sim = sample_corr_GBM(
       mu.detach().numpy(), Sigma.detach().numpy(),
       market.xarray.sel(variable='signal').isel(time=0).to_numpy(),
-      np.cumsum(dt).numpy()
+      torch.cumsum(dt, 0).numpy()
     )
     # note [:, 1:] because the 1st col of sample_corr_GBM's result is S_0
     maes[i] = mae(market.xarray.sel(variable='signal').to_numpy().T[:, 1:], sim[:, 1:])
@@ -164,7 +183,7 @@ def get_dep_MLE_params(market: Market, n_iters=200, return_best=True):
   if return_best:
     return best_mu, best_Sigma
   else:
-    return mu.detach().numpy(), Sigma.detach().numpy()
+    return mu.detach().numpy(), (A@A.T).detach().numpy()
 
 def sample_corr_GBM(mu, Sigma, S_0, ts, add_BM=True):
   """
