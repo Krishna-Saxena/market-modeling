@@ -8,9 +8,9 @@ import pandas as pd
 
 class VarType(Enum):
   QUANTITATIVE = auto()
+  BINARY = auto()
   CATEGORICAL = auto()
   MULTI_CATEGORICAL = auto()
-  BINARY = auto()
 
 
 class Metric(ABC):
