@@ -13,6 +13,7 @@ from metrics.Metrics import VarType
 from assets.Assets import Asset
 from modeling_utils.py_utils import apply_one_encode, apply_many_encode, zeros_like_nan, get_dataset_only_numeric_vars, \
   last_index_lt_1D, make_avg_col_name, ffill_df, bfill_df
+from modeling_utils.xr_utils import ffill_via_pandas, bfill_via_pandas
 from models.gbm_models.gbm_modeling_utils import ffill_1D_GBM, bfill_1D_GBM
 
 
@@ -252,12 +253,13 @@ class XarrayMarket(Market):
       for i in range(len(self.assets)):
         filled_df = ffill_1D_GBM(self.xarray_ds.isel(ID=i)[col_to_fill].to_dataframe().reset_index(), **kwargs)
         filled_df = bfill_1D_GBM(filled_df, **kwargs)
-        self.xarray_ds.isel(ID=0)[col_to_fill] = filled_df[col_to_fill]
+        self.xarray_ds.isel(ID=i)[col_to_fill].data[:] = filled_df[col_to_fill].values
 
     else:
       self.xarray_ds = self.xarray_ds.dropna(dim='time', subset=[col_to_fill])
-    # self.xarray_ds.ffill(dim='time')
-    # self.xarray_ds.bfill(dim='time')
+
+    self.xarray_ds = ffill_via_pandas(self.xarray_ds)
+    self.xarray_ds = bfill_via_pandas(self.xarray_ds)
 
   def display_market(self, **kwargs):
     """

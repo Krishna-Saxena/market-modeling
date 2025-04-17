@@ -91,3 +91,18 @@ def bfill_df(df: pd.DataFrame, cols_to_exclude):
     covar_cols.remove(col)
   df.iloc[:, covar_cols] = df.iloc[:, covar_cols].bfill()
   return df
+
+def compute_next_ewma(EWMA_t, S_tdt, dt, alpha):
+  """
+  Compute next EWMA of a time series:
+  EWMA_tdt = alpha**dt * EWMA_t + (1 - alpha**dt) * S_tdt
+
+  Args:
+    EWMA_t: the EWMA up to time t.
+    S_tdt: the state at time t + dt.
+    dt: change in time between previous EWMA and new measurement.
+    alpha: decay rate, 2/(Days + 1) is the common use case.
+
+  Returns: EWMA_tdt, the next EWMA.
+  """
+  return alpha**dt * EWMA_t + (1-alpha**dt) * S_tdt

@@ -5,3 +5,4 @@ yfinance
 xarray
 torch
 numbagg
+bottleneck

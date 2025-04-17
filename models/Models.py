@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 class Model(ABC):
-  def __init__(self, market):
+  def __init__(self, market, **kwargs):
     self.market = market
     self.N_ASSETS = len(self.market.assets)
 
