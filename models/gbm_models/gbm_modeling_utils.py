@@ -1,30 +1,35 @@
+from datetime import datetime
+import pickle
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 import torch
-import xarray.core.dataset
+from tqdm import trange
 from matplotlib import pyplot as plt
 
 from metrics.EvalMetrics import mae
 from modeling_utils.torch_utils import get_zero_grad_hook
-from modeling_utils.xr_utils import extrapolate_covar_xr
+from modeling_utils.xr_utils import append_xr_dataset, get_covar_indices_and_names
 
 SEED = 802073711
 
 # Independent Model
-def get_indep_MLE_params(ts_df: pd.DataFrame, col_to_model: str = 'signal'):
+def get_indep_MLE_params(growth_ts: xr.Dataset, col_to_model: str = 'signal'):
   """
   Calculates the MLE GBM parameters using a single timeseries.
 
   Args:
-    `ts_df`: a pd.DataFrame with columns `time` and `signal` (at minimum).
+    `growth_ts`: a xr.Dataset with single index `time` and variables `signal` (plus other unused variables).
     `col_to_model`: a column in `ts_df` whose 1D GBM parameters will be returned.
 
   Returns: mu_hat, sigma_sq_hat, the MLE drift and volatility.
   """
-  t = ts_df.time - ts_df['time'].min()
-  dt = (t - t.shift(1)).dt.days.values
-  signal = ts_df[col_to_model].values
+  if isinstance(growth_ts, xr.Dataset):
+    dt = (growth_ts.time - growth_ts.time.shift(time=1)).dt.days.values
+  elif isinstance(growth_ts, pd.DataFrame):
+    dt = (growth_ts.time - growth_ts.time.shift(1)).dt.days.values
+  signal = growth_ts[col_to_model].values
 
   n = signal.shape[0]
   log_prices = np.log(signal)
@@ -73,6 +78,9 @@ def ffill_1D_GBM(ts_df, num_sims=100, col_to_fill='signal'):
   Returns: `ts_df` with NaN values of `col_to_fill` filled. Note: `ts_df` was modified.
   """
   full_df = ts_df.dropna(axis='index', subset=col_to_fill)
+  # if no rows were dropped, return early before simulating
+  if full_df.shape[-2] == ts_df.shape[-2]:
+    return ts_df
   mu_hat, sigma_sq_hat = get_indep_MLE_params(full_df, col_to_fill)
   avg_drift = mu_hat - sigma_sq_hat / 2
 
@@ -96,6 +104,9 @@ def bfill_1D_GBM(ts_df, num_sims=100, col_to_fill='signal'):
   Returns: `ts_df` with NaN values of `col_to_fill` filled. Note: `ts_df` was modified.
   """
   full_df = ts_df.dropna(axis='index', subset=col_to_fill)
+  # if no rows were dropped, return early before simulating
+  if full_df.shape[-2] == ts_df.shape[-2]:
+    return ts_df
   mu_hat, sigma_sq_hat = get_indep_MLE_params(full_df)
   avg_drift = mu_hat - sigma_sq_hat / 2
 
@@ -132,12 +143,8 @@ def _add_random_noise_to_Cov_mat(Sigma, adjustment=100):
   cov_vals = Sigma[np.triu_indices_from(Sigma, k=1)]
   assignments = np.argmin((cov_vals[:, None]-mu[None, :])**2, axis=1)
   # 3. get vars of each mode
-  var0 = np.var(cov_vals[assignments == 0])
-  if np.isnan(var0):
-    var0 = 0.
-  var1 = np.var(cov_vals[assignments == 1])
-  if np.isnan(var1):
-    var1 = 0.
+  var0 = 0. if np.allclose(assignments, 1) else np.var(cov_vals[assignments == 0])
+  var1 = 0. if np.allclose(assignments, 0) else np.var(cov_vals[assignments == 1])
   # 4. let sig2_hat = weighted avg of the modes' vars, weighted by members of each mode
   sig2_hat = (var0*np.sum(assignments == 0) + var1*np.sum(assignments == 1))/(assignments.shape[0])
   # 5. add N(0, sig2_hat*I) noise to Sigma
@@ -158,7 +165,7 @@ def get_dep_MLE_params(market, n_epochs=200, return_best=True):
   # dt has shape (n_ts, ) with 1st entry = NaN
   xarr = market.get_dataarray()
   dt = (xarr.time - xarr.time.shift({'time':1})).dt.days.values
-  X = np.log(xarr.sel(variable='signal'))
+  X = np.log(xarr.sel(variable='signal').astype(np.float32))
   # dX has shape (n_assets, n_ts) with 1st col = NaN
   dX = (X - X.shift({'time': 1})).to_numpy().T
 
@@ -262,27 +269,30 @@ def _get_nll_loss_dep_cov(dX, dt, mu, Sigma, theta, Covs):
 
   return torch.einsum('at,at->', z, z)/2
 
-def get_dep_cov_MLE_params(market, n_epochs=200, return_best=True, l1_penalty=0.):
+def get_dep_cov_MLE_params(market, covar_vars, n_epochs=200, return_best=True, l1_penalty=0.):
   """
   Calculate MLE MV-GBM model of a set of signals.
 
   Args:
     `market`: an XarrayMarket object.
+    `covar_vars` [str]: A required list of covariate variable names, each entry `covar_vars[i]` must be a xr.Variable in `market.xarray_ds`.
     `n_epochs`: number of epochs of gradient ascent to run.
     `return_best`: whether to return the best parameters (by MAE metric) or parameters from last iteration.
 
   Returns: mu_hat, Sigma_hat, theta_hat.
   """
-  avg_vars = market.get_avg_vars()
+  n_covars = len(covar_vars)
 
   # dt has shape (n_ts, ) with 1st entry = NaN
   xarr = market.get_dataarray()
-  dt = (xarr.time - xarr.time.shift({'time':1})).dt.days.values
-  X = np.log(xarr.sel(variable='signal'))
+  dt = (xarr.time - xarr.time.shift({'time':1})).dt.days.values.astype(np.float32)
+  X = np.log(xarr.sel(variable='signal').astype(np.float32))
   # dX has shape (n_assets, n_ts) with 1st col = NaN
   dX = (X - X.shift({'time': 1})).to_numpy().T
+
+  covar_indices, _ = get_covar_indices_and_names(market.xarray_ds, covar_vars)
   # Covs has shape (n_assets, n_ts, n_covars)
-  Covs = xarr.drop_sel(variable='signal').to_numpy()
+  Covs = xarr.isel(variable=covar_indices).astype(np.float32).to_numpy()
   Covs = Covs.transpose((2, 1, 0))
 
   # shift time axes to remove NaN obs
@@ -296,10 +306,10 @@ def get_dep_cov_MLE_params(market, n_epochs=200, return_best=True, l1_penalty=0.
   # get initial state from simple model
   mu_0, Sigma_0 = _get_init_dep_MLE_params(dX, dt)
   Sigma_0 = _add_random_noise_to_Cov_mat(Sigma_0)
-  A_0 = np.linalg.cholesky(Sigma_0).real
-  (n_assets, n_timesteps, n_covars) = Covs.shape
+  A_0 = np.linalg.cholesky(Sigma_0).real.astype(np.float32)
+  # (n_assets, n_timesteps, n_covars) = Covs.shape
   # theta_0, mu_0 = np.linalg.lstsq(Covs.reshape(n_assets*n_timesteps, n_covars), mu_0)
-  theta_0 = (np.random.randn(market.num_covars)/market.num_covars**2).astype(mu_0.dtype)
+  theta_0 = (np.random.randn(n_covars)/n_covars**2).astype(mu_0.dtype)
 
   mu = torch.tensor(mu_0, requires_grad=True)
   A = torch.tensor(A_0, requires_grad=True)
@@ -317,13 +327,15 @@ def get_dep_cov_MLE_params(market, n_epochs=200, return_best=True, l1_penalty=0.
   optim = torch.optim.Adam((mu, A, theta), lr=1e-3)
   #   reduce the LR 10% every 100 epochs
   torch.optim.lr_scheduler.StepLR(optim, step_size=50, gamma=0.1**0.5)
-  losses = [0] * n_epochs
-  maes = [0] * n_epochs
+  i_s = []
+  losses = []
+  maes = []
+  opt_hist = {}
 
   best_mu, best_Sigma, best_theta = None, None, None
   best_metric = float('inf')
 
-  for i in range(n_epochs):
+  for i in (pbar := trange(n_epochs)):
     optim.zero_grad()
     Sigma = A@A.T
     loss = _get_nll_loss_dep_cov(dX, dt, mu, Sigma, theta, Covs_pt)
@@ -331,39 +343,41 @@ def get_dep_cov_MLE_params(market, n_epochs=200, return_best=True, l1_penalty=0.
     loss.backward()
     optim.step()
 
-    # save per epoch eval metrics
-    losses[i] = loss.item()
-    sim = sample_dep_cov_GBM(
-      mu.detach().numpy(), Sigma.detach().numpy(), theta.detach().numpy(),
-      xarr.sel(variable='signal').isel(time=0).to_numpy(),
-      times,
-      market.xarray_ds, 0,
-      avg_vars
-    )
-    # note [:, 1:] because the 1st col of sample_corr_GBM's result is S_0
-    maes[i] = mae(xarr.sel(variable='signal').to_numpy().T[:, 1:], sim[:, 1:])
+    if (i < 10) or (i % 3 == 0 and i < 50) or (i % 10 == 0):
+      i_s.append(i)
+      # save per epoch eval metrics
+      losses.append(loss.item())
+      sim = sample_dep_cov_GBM(
+        mu.detach().numpy(), Sigma.detach().numpy(), theta.detach().numpy(),
+        xarr.sel(variable='signal').isel(time=0).to_numpy(),
+        times,
+        market.xarray_ds, 0,
+        list(market.derived_variables.keys()), covar_indices
+      )
+      # note [:, 1:] because the 1st col of sample_corr_GBM's result is S_0
+      maes.append(mae(xarr.sel(variable='signal').to_numpy().T[:, 1:], sim[:, 1:]))
 
-    if maes[i] < best_metric:
-      best_metric = maes[i]
-      best_mu = mu.detach().numpy()
-      best_Sigma = Sigma.detach().numpy()
-      best_theta = theta.detach().numpy()
+      pbar.set_postfix({'loss': losses[-1], 'MAE': maes[-1]})
 
-  plt.subplot(1, 2, 1)
-  plt.plot(losses, '-o')
-  plt.title('loss curve')
+      opt_hist[i] = (losses[-1], maes[-1], mu.detach().numpy(), Sigma.detach().numpy(), theta.detach().numpy())
 
-  plt.subplot(1, 2, 2)
-  plt.plot(maes, '-o')
-  plt.title('MAE metric')
-  plt.tight_layout()
+      if maes[-1] < best_metric:
+        best_metric = maes[-1]
+        best_mu = mu.detach().numpy()
+        best_Sigma = Sigma.detach().numpy()
+        best_theta = theta.detach().numpy()
+
+  with open(f'training_hist_{datetime.strftime(datetime.now(), "%Y_%m_%d_%H_%M_%S")}.pkl', 'wb') as file:
+    pickle.dump(opt_hist, file)
+  training_df = pd.DataFrame({'epochs':i_s, 'loss': losses, 'mae': maes})
+  training_df.to_csv(f'training_data_{datetime.strftime(datetime.now(), "%Y_%m_%d_%H_%M_%S")}.csv', index=False)
 
   if return_best:
     return best_mu, best_Sigma, best_theta
   else:
     return mu.detach().numpy(), (A@A.T).detach().numpy(), theta.detach().numpy()
 
-def sample_dep_cov_GBM(mu, Sigma, theta, S_0, times, ds, t_start_idx, avg_map, add_BM=True):
+def sample_dep_cov_GBM(mu, Sigma, theta, S_0, times, ds, t_start_idx, der_var_specs, covar_indices, add_BM=True):
   """
   Sample an independent Geometric Brownian Motion.
 
@@ -374,8 +388,9 @@ def sample_dep_cov_GBM(mu, Sigma, theta, S_0, times, ds, t_start_idx, avg_map, a
     `S_0`: initial signal, shape (n_assets,).
     `times`: array of time steps since t_0.
     `ds`: xarray.Dataset of full market history, shape (n_assets, n_ts, n_covars).
-    `t_start_idx`: index of `ds.sel(variable=COVAR_VARS)` corresponding to covars at t_0, will be mapped onto [0, len(ds['time'])-1).
-    `avg_map`: map of {var_name : {time spans var_name was averaged over when creating `ds`}}.
+    `t_start_idx`: index of `ds.sel(variable=COVAR_VARS)` corresponding to covars at t_0, will be mapped onto [0, len(ds['time'])-1). Generally, set t_start_idx to 0 to test GoF and t_start_idx to -1 to forecast.
+    `der_var_specs`: a list of DerivedVariable specifications.
+    `covar_indices`: the locations of covariate variables along `ds`'s variable axis, shape/len (n_covars,).
     `add_BM`: whether to add Brownian Motion when generating samples.
 
   Returns: an array of [S_0 | sampled signals] with shape (S_0.shape[0], len(times) + 1).
@@ -390,15 +405,15 @@ def sample_dep_cov_GBM(mu, Sigma, theta, S_0, times, ds, t_start_idx, avg_map, a
   for i in range(len(times)):
     dt = times[i] if i == 0 else times[i] - times[i - 1]
     vol = (dt ** 0.5 * Sigma@bm[:, i - 1]) if add_BM else 0
-    covars = ds.isel(time=t_start_idx+i).drop_vars('signal').to_dataarray().to_numpy()
+    covars = ds.isel(time=t_start_idx+i).to_dataarray().isel(variable=covar_indices).astype(np.float32).to_numpy()
     covar_contr = np.einsum('Ca,C->a', covars, theta)
     S_ts[:, i + 1] = S_ts[:, i] * np.exp((avg_drift + covar_contr) * dt + vol)
     if t_start_idx+i >= len(ds['time']):
-      ds = extrapolate_covar_xr(
+      ds = append_xr_dataset(
         ds,
         S_ts[:, i + 1],
         dt,
-        avg_map
+        der_var_specs
       )
 
   return S_ts

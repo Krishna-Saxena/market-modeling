@@ -1,26 +1,26 @@
 from abc import ABC, abstractmethod
 
 from models.Models import Model
+from markets.Markets import Market
 from models.gbm_models.gbm_modeling_utils import *
-from markets.Markets import XarrayMarket
 
 class IndependentModel(Model):
-  def __init__(self, market):
+  def __init__(self, market: Market):
     super().__init__(market)
 
     self.drifts = np.zeros((self.N_ASSETS,), dtype=np.float32)
     self.vols = np.zeros((self.N_ASSETS,), dtype=np.float32)
 
   def estimate_parameters(self, **kwargs):
-    for i, asset in enumerate(self.market.assets):
-      self.drifts[i], self.vols[i] = get_indep_MLE_params(asset.ts_df)
+    for i in range(self.market.get_num_assets()):
+      self.drifts[i], self.vols[i] = get_indep_MLE_params(self.market.xarray_ds.isel(ID=i))
 
   def simulate(self, S_0, dates, num_sims, **kwargs):
     sim_res = np.zeros((num_sims, self.N_ASSETS, len(dates)))
     ts = (dates - dates.iloc[0]).dt.days
 
     for n_sim in range(num_sims):
-      for i, asset in enumerate(self.market.assets):
+      for i in range(self.market.get_num_assets()):
         sim_res[n_sim, i, :] = sample_indep_GBM(
           self.drifts[i],
           self.vols[i],
@@ -32,10 +32,8 @@ class IndependentModel(Model):
 
 
 class DependentModel(Model):
-  def __init__(self, market):
-    if not isinstance(market, XarrayMarket):
-      raise TypeError(f'DependentModel requires market to be a XarrayMarket, got {type(market)}')
-    super().__init__(market)
+  def __init__(self, market: Market, **kwargs):
+    super().__init__(market, **kwargs)
 
     self.drifts = np.zeros((self.N_ASSETS,), dtype=np.float32)
     self.Sigma = np.zeros((self.N_ASSETS, self.N_ASSETS), dtype=np.float32)
@@ -64,9 +62,19 @@ class DependentModel(Model):
 
 class CovariateModel(Model, ABC):
   @abstractmethod
-  def __init__(self, market):
-    super().__init__(market)
-    self.thetas = np.zeros((market.num_covars, ), dtype=np.float32)
+  def __init__(self, market: Market, **kwargs):
+    """
+    Abstract definition of a model with covariates.
+
+    Args:
+      `market`: a Market indexed by 'ID' and 'time'
+      **kwargs:
+      - `covar_vars` [str]: A required list of covariate variable names, each entry `covar_vars[i]` must be a xr.Variable in `market.xarray_ds`.
+    """
+    assert 'covar_vars' in kwargs, 'When creating a CovariateModel instance, you must specify a list of column names, `covar_vars`, that will be terms in the regression.'
+    super().__init__(market, **kwargs)
+    self.covar_vars = kwargs['covar_vars']
+    self.thetas = np.zeros((len(self.covar_vars), ), dtype=np.float32)
 
   @abstractmethod
   def summarize_covariate_distributions(self):
@@ -89,11 +97,11 @@ class IndependentCovariateModel(IndependentModel, CovariateModel):
 
 
 class DependentCovariateModel(DependentModel, CovariateModel):
-  def __init__(self, market):
-    super().__init__(market)
+  def __init__(self, market, **kwargs):
+    super().__init__(market, **kwargs)
 
   def estimate_parameters(self, **kwargs):
-    self.drifts, self.Sigma, self.thetas = get_dep_cov_MLE_params(self.market, **kwargs)
+    self.drifts, self.Sigma, self.thetas = get_dep_cov_MLE_params(self.market, self.covar_vars, **kwargs)
     self.vols = np.linalg.norm(self.Sigma, axis=0, keepdims=True)
 
   def simulate(self, S_0, dates, num_sims, **kwargs):
@@ -120,7 +128,7 @@ class DependentCovariateModel(DependentModel, CovariateModel):
       raise ValueError('dates[0] should have a frame in ds. Note, ds can also be provided as a kwarg')
     ds = ds.isel(time=slice(0, t_start_idx+1))
 
-    avg_map = kwargs.get('avg_map', self.market.get_avg_vars())
+    covar_indices, _ = get_covar_indices_and_names(self.market.xarray_ds, self.covar_vars)
 
     for n_sim in range(num_sims):
       sim_res[n_sim, :, :] = sample_dep_cov_GBM(
@@ -128,15 +136,13 @@ class DependentCovariateModel(DependentModel, CovariateModel):
         S_0,
         ts[1:],
         ds, t_start_idx,
-        avg_map,
+        self.market.derived_variables,
+        covar_indices,
         add_BM=kwargs.get('add_BM', True)
       )
 
     return sim_res
 
   def summarize_covariate_distributions(self):
-    qual_var_names = [k for k in self.market.xarray_ds.variables.keys()
-                      if k not in {'time', 'ID', 'signal'} and self.market.xarray_ds[k].dtype != 'O']
-    assert len(qual_var_names) == self.market.num_covars
-    for i, col_name in enumerate(qual_var_names):
+    for i, col_name in enumerate(self.covar_vars):
       print(col_name, format(self.thetas[i], '.4f'), sep='\t\t')

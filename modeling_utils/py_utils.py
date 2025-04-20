@@ -1,7 +1,5 @@
 import numpy as np
 import pandas as pd
-from xarray import Dataset, DataArray, Variable, zeros_like
-
 
 def last_index_lt_1D(a, value):
   """
@@ -22,21 +20,6 @@ def fmt_name(first, last):
   last = '' if not last else last
   return f'{first} {last}'
 
-def zeros_like_nan(arr):
-  if isinstance(arr, DataArray) or isinstance(arr, Dataset) or isinstance(arr, Variable):
-    new_arr = zeros_like(arr)
-    if arr.dtype == object or arr.dtype == str:
-      new_arr = new_arr.where(arr != '')
-    else:
-      new_arr = new_arr.where(arr != np.NaN)
-  else:
-    new_arr = np.zeros_like(arr)
-    if arr.dtype == object or arr.dtype == str:
-      new_arr[arr == ''] = np.NaN
-    else:
-      new_arr[np.isnan(arr)] = np.NaN
-  return new_arr
-
 def apply_one_encode(row, var_name, zeros_cols, level_id_map):
   if type(row[var_name]) == str or not np.isnan(row[var_name]):
     row[zeros_cols[level_id_map[row[var_name]]]] = 1
@@ -47,18 +30,6 @@ def apply_many_encode(row, sep, var_name, zeros_cols, level_id_map):
     for value in row[var_name].split(sep):
       row[zeros_cols[level_id_map[value]]] = 1
   return row
-
-def get_dataset_only_numeric_vars(dataset: Dataset):
-  dataset_df = dataset.to_dataframe()
-
-  for var_name, var_type in dataset_df.dtypes.items():
-    if var_type == object:
-      dataset_df.drop(var_name, axis=1, inplace=True)
-
-  return Dataset.from_dataframe(dataset_df)
-
-def make_avg_col_name(var_name, time_span):
-  return f'{var_name}_{time_span}d_avg'
 
 def ffill_df(df: pd.DataFrame, cols_to_exclude):
   """
@@ -92,10 +63,16 @@ def bfill_df(df: pd.DataFrame, cols_to_exclude):
   df.iloc[:, covar_cols] = df.iloc[:, covar_cols].bfill()
   return df
 
+def alpha_to_days(alpha):
+  return int(2/alpha - 1)
+
+def days_to_alpha(days):
+  return 2/(days + 1)
+
 def compute_next_ewma(EWMA_t, S_tdt, dt, alpha):
   """
   Compute next EWMA of a time series:
-  EWMA_tdt = alpha**dt * EWMA_t + (1 - alpha**dt) * S_tdt
+  EWMA_{t+dt} = alpha**dt * EWMA_t + (1 - alpha**dt) * S_{t+dt}.
 
   Args:
     EWMA_t: the EWMA up to time t.
@@ -106,3 +83,30 @@ def compute_next_ewma(EWMA_t, S_tdt, dt, alpha):
   Returns: EWMA_tdt, the next EWMA.
   """
   return alpha**dt * EWMA_t + (1-alpha**dt) * S_tdt
+
+def make_ewma_col_name(var_name, days):
+  return '{}_ewma_{}d'.format(var_name, int(round(days)))
+
+def make_scale_diff_col_name(var_name):
+  return '{}_scl_diff'.format(var_name)
+
+def make_scale_diff_log_col_name(var_name):
+  return '{}_log_scl_diff'.format(var_name)
+
+def drop_from_array(array, values_to_drop):
+  """
+  Drops elements equal to the elements of `values_to_drop` from `array`.
+
+  Args:
+    array: a (not necessarily arithmetically, but always strictly) increasing array.
+    values_to_drop: a (not necessarily arithmetically, but always strictly) increasing array.
+
+  Returns: a subset of `array` that is still strictly increasing, without any elements in `values_to_drop`.
+  """
+  for i in range(len(array))[::-1]:
+    if array[i] == values_to_drop[-1]:
+      del array[i]
+      values_to_drop.pop()
+      if len(values_to_drop) == 0:
+        break
+  return array
