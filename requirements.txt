@@ -1,3 +1,9 @@
 numpy
 pandas
 matplotlib
+yfinance
+xarray
+torch
+numbagg
+bottleneck
+tqdm
