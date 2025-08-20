@@ -220,6 +220,8 @@ class Market:
     Args:
       val_size (float, \\in (0, 1)): proportion of the dataset to include in the validation split.
       test_size (float, \\in (0, 1)): proportion of the dataset to include in the test split.
+      **kwargs: optional keyword arguments.
+      - `prediction_days` (int &gte 0): number of extra prediction days to include in the train and validation splits.
 
     Returns: three xr.Datasets for training, validation, and testing.
     """
@@ -228,7 +230,7 @@ class Market:
     num_train, num_val = max(num_train, 2), max(num_val, 2)
 
     return (
-      self.xarray_ds.isel(time=slice(0, num_train)),
-      self.xarray_ds.isel(time=slice(num_train, num_train + num_val)),
+      self.xarray_ds.isel(time=slice(0, num_train + kwargs.get('prediction_days', 0))),
+      self.xarray_ds.isel(time=slice(num_train, num_train + num_val + kwargs.get('prediction_days', 0))),
       self.xarray_ds.isel(time=slice(num_train + num_val, None))
     )

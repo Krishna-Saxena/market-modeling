@@ -58,9 +58,9 @@ class MasterTransform(DerivedVariable):
 		xr_ds['restarts_per_activity'] = xr_ds['num_restarts'] / (xr_ds['total_activities'] + div0_eps)
 
 		# Attendance covars
-		# 	create new variables that calculate total number of sessions students are present and absent
+		# 	create new variables that calculate total number of sessions assets are present and absent
 		xr_ds[['cumsum_present', 'cumsum_absent']] = xr_ds[['present', 'absent']].cumsum('time')
-		# 	the same, but only considering the last ~2 months students have practiced (2 sessions/week * 8weeks/month = 16 sessions + 4 bonus for at-home)
+		# 	the same, but only considering the last ~2 months assets have practiced (2 sessions/week * 8weeks/month = 16 sessions + 4 bonus for at-home)
 		xr_ds[['cumsum_present_60', 'cumsum_absent_60']] = xr_ds[['present', 'absent']].rolling(dim={'time':20}, min_periods=1).sum()
 		# 	calculate attendance rates
 		xr_ds['attendance'] = xr_ds['cumsum_present'] / (xr_ds['cumsum_present'] + xr_ds['cumsum_absent'] + div0_eps)
