@@ -99,35 +99,39 @@ def plot_predictions(market: Market, sim_dates, sim_results, sim_counterfact):
 
     Returns: a plot.
     """
-    colorscheme = mpl.colormaps['tab20b']
+    # colorscheme = mpl.colormaps['tab20b']
     fig, ax = plt.subplots(figsize=(10, 8))
 
     xarr = market.get_dataarray()
+    cmap = discrete_cmap(xarr.shape[2], 'gist_ncar')
 
-    for i in range(colorscheme.N):
+    for i in range(xarr.shape[2]):
         asset_i_id = xarr.isel(ID=i)['ID'].values
         # plot true observations
         ax.plot(
             xarr.time, xarr.sel(ID=asset_i_id, variable='signal'),
-            '-o', color=colorscheme.colors[i % colorscheme.N], ms=2,
+            '-o', ms=2,
+            color=(cmap._segmentdata['red'][i, -1], cmap._segmentdata['green'][i, -1], cmap._segmentdata['blue'][i, -1]),
             label=f'{asset_i_id} signal'
         )
         # plot simulated predictions w/o GBM
         ax.plot(
             sim_dates, sim_counterfact[0, i, :],
-            color=colorscheme.colors[i % colorscheme.N], marker='.', linestyle='dashed', ms=5,
+            marker='.', linestyle='dashed', ms=5,
+            color=(cmap._segmentdata['red'][i, -1], cmap._segmentdata['green'][i, -1], cmap._segmentdata['blue'][i, -1]),
             label=f'{asset_i_id} avg pred.'
         )
         # plot simulated predictions w/ GBM
         for j_sim in range(sim_results.shape[0]):
             ax.plot(
-                sim_dates, sim_results[j_sim, i, :],
-                alpha=0.5, color=colorscheme.colors[i % colorscheme.N], linestyle='dotted'
+                sim_dates, sim_results[j_sim, i, :], alpha=0.5,
+                color=(cmap._segmentdata['red'][i, -1], cmap._segmentdata['green'][i, -1], cmap._segmentdata['blue'][i, -1]),
+                linestyle='dotted'
             )
 
     ax.set_title('Percent of Total Math SBA Test Score Variance\nExplained by Within-Classroom Variance')
     ax.set(xlabel='Date', ylabel='close price', title='Close Prices vs Time')
-    ax.set_xlim([datetime(2025, 1, 1), sim_dates.max()])
+    ax.set_xlim([datetime(2025, 4, 1), sim_dates.max()])
     ax.grid(False, 'major', 'x')
     ax.set_yscale('log')
     fig.tight_layout()
@@ -135,3 +139,15 @@ def plot_predictions(market: Market, sim_dates, sim_results, sim_counterfact):
     handles, labels = ax.get_legend_handles_labels()
     n_cols = 6
     ax.legend(flip(handles, n_cols), flip(labels, n_cols), loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=n_cols)
+
+def discrete_cmap(N, base_cmap=None):
+    """Create an N-bin discrete colormap from the specified input map"""
+    # Source: https://gist.github.com/jakevdp/91077b0cae40f8f8244a
+
+    # Note that if base_cmap is a string or None, you can simply do
+    #    return plt.cm.get_cmap(base_cmap, N)
+    # The following works for string, None, or a colormap instance:
+    base = plt.get_cmap(base_cmap)
+    color_list = base(np.linspace(0, 1, N))
+    cmap_name = base.name + str(N)
+    return base.from_list(cmap_name, color_list, N)
